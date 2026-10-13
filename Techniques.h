@@ -2,54 +2,54 @@
 #include "Grid.h"
 #include <string>
 #include <vector>
-using namespace std;
+
 // Replaces a full "solvability certificate" for now: just records what was
 // placed, where, and which technique placed it.
 struct PlacementLog {
     int row;     // 0-based
     int col;     // 0-based
     int digit;
-    string method;
+    std::string method;
 };
 
 class Technique {
 public:
     virtual ~Technique() = default;
-    virtual string name() const = 0;
+    virtual std::string name() const = 0;
 
     // Runs one full pass over the grid. Returns true if the grid changed
     // (a digit was placed, or at least one candidate was eliminated).
-    virtual bool apply(Grid& grid, vector<PlacementLog>& log) = 0;
+    virtual bool apply(Grid& grid, std::vector<PlacementLog>& log) = 0;
 };
 
 // ---------------- Tier 1: Basic ----------------
 
 // A cell with exactly one remaining candidate must hold that digit.
-class DirectSingle : public Technique {
+class NakedSingle : public Technique {
 public:
-    string name() const override { return "Direct Single"; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    std::string name() const override { return "Naked Single"; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // A digit that fits in only one cell within a row/col/box must go there.
 class HiddenSingle : public Technique {
 public:
-    string name() const override { return "Hidden Single"; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    std::string name() const override { return "Hidden Single"; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // ---------------- Tier 2: Intermediate ----------------
 
-// Direct Pair / Triple / Quad, parameterized by subset size (2, 3, or 4).
+// Naked Pair / Triple / Quad, parameterized by subset size (2, 3, or 4).
 // If `size` cells in a unit share a candidate pool of exactly `size` digits,
 // those digits can be eliminated from every other cell in the unit.
-class DirectSubset : public Technique {
+class NakedSubset : public Technique {
     int size_;
-    string label_;
+    std::string label_;
 public:
-    explicit DirectSubset(int size);
-    string name() const override { return label_; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    explicit NakedSubset(int size);
+    std::string name() const override { return label_; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // Hidden Pair / Triple / Quad, parameterized by subset size (2, 3, or 4).
@@ -57,11 +57,11 @@ public:
 // every other candidate can be stripped from those cells.
 class HiddenSubset : public Technique {
     int size_;
-    string label_;
+    std::string label_;
 public:
     explicit HiddenSubset(int size);
-    string name() const override { return label_; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    std::string name() const override { return label_; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // Pointing Pair/Triple (box -> line): if a digit's candidates within a box
@@ -69,8 +69,8 @@ public:
 // rest of that row/column outside the box.
 class PointingPair : public Technique {
 public:
-    string name() const override { return "Pointing Pair/Triple (Box -> Line)"; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    std::string name() const override { return "Pointing Pair/Triple (Box -> Line)"; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // Claiming / Line-Box reduction: if a digit's candidates within a row or
@@ -78,9 +78,12 @@ public:
 // of that box outside the row/column.
 class ClaimingPair : public Technique {
 public:
-    string name() const override { return "Claiming (Line -> Box)"; }
-    bool apply(Grid& grid, vector<PlacementLog>& log) override;
+    std::string name() const override { return "Claiming (Line -> Box)"; }
+    bool apply(Grid& grid, std::vector<PlacementLog>& log) override;
 };
 
 // All 27 units of the board: 9 rows, 9 columns, 9 boxes.
-vector<vector<Cell>> allUnits();
+std::vector<std::vector<Cell>> allUnits();
+
+// All k-sized index combinations of [0, n). Shared by Tier 2 and Tier 3.
+std::vector<std::vector<int>> combinations(int n, int k);

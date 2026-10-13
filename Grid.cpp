@@ -2,13 +2,13 @@
 #include <bitset>
 #include <iostream>
 #include <set>
-using namespace std;
+
 Grid::Grid() {
     for (auto& row : values) row.fill(0);
     for (auto& row : candidates) row.fill(FULL_MASK);
 }
 
-Grid Grid::fromString(const string& s) {
+Grid Grid::fromString(const std::string& s) {
     Grid g;
     for (int i = 0; i < SIZE * SIZE; ++i) {
         char c = s[i];
@@ -17,15 +17,15 @@ Grid Grid::fromString(const string& s) {
         if (c >= '1' && c <= '9') {
             g.values[row][col] = c - '0';
         } else {
-            g.values[row][col] = 0; 
+            g.values[row][col] = 0; // '0' or '.' or anything else = blank
         }
     }
     g.recomputeCandidates();
     return g;
 }
 
-string Grid::toString() const {
-    string s;
+std::string Grid::toString() const {
+    std::string s;
     s.reserve(SIZE * SIZE);
     for (int r = 0; r < SIZE; ++r)
         for (int c = 0; c < SIZE; ++c)
@@ -35,12 +35,12 @@ string Grid::toString() const {
 
 void Grid::print() const {
     for (int r = 0; r < SIZE; ++r) {
-        if (r > 0 && r % BOX == 0) cout << "---------------------\n";
+        if (r > 0 && r % BOX == 0) std::cout << "------+-------+------\n";
         for (int c = 0; c < SIZE; ++c) {
-            if (c > 0 && c % BOX == 0) cout << "| ";
-            cout << (values[r][c] == 0 ? '0' : static_cast<char>('0' + values[r][c])) << ' ';
+            if (c > 0 && c % BOX == 0) std::cout << "| ";
+            std::cout << (values[r][c] == 0 ? '.' : static_cast<char>('0' + values[r][c])) << ' ';
         }
-        cout << "\n";
+        std::cout << "\n";
     }
 }
 
@@ -53,7 +53,7 @@ bool Grid::isSolved() const {
 
 bool Grid::place(int row, int col, int digit) {
     uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
-    if (!(candidates[row][col] & bit)) return false; 
+    if (!(candidates[row][col] & bit)) return false; // not a legal candidate here
 
     values[row][col] = digit;
     candidates[row][col] = 0;
@@ -65,7 +65,7 @@ bool Grid::place(int row, int col, int digit) {
 }
 
 bool Grid::eliminateCandidate(int row, int col, int digit) {
-    if (values[row][col] != 0) return false; 
+    if (values[row][col] != 0) return false; // already placed, nothing to eliminate
     uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
     if (!(candidates[row][col] & bit)) return false;
     candidates[row][col] &= ~bit;
@@ -92,22 +92,22 @@ int Grid::boxOf(int row, int col) {
     return (row / BOX) * BOX + (col / BOX);
 }
 
-vector<Cell> Grid::cellsInRow(int row) {
-    vector<Cell> out;
+std::vector<Cell> Grid::cellsInRow(int row) {
+    std::vector<Cell> out;
     out.reserve(SIZE);
     for (int c = 0; c < SIZE; ++c) out.emplace_back(row, c);
     return out;
 }
 
-vector<Cell> Grid::cellsInCol(int col) {
-    vector<Cell> out;
+std::vector<Cell> Grid::cellsInCol(int col) {
+    std::vector<Cell> out;
     out.reserve(SIZE);
     for (int r = 0; r < SIZE; ++r) out.emplace_back(r, col);
     return out;
 }
 
-vector<Cell> Grid::cellsInBox(int boxId) {
-    vector<Cell> out;
+std::vector<Cell> Grid::cellsInBox(int boxId) {
+    std::vector<Cell> out;
     out.reserve(SIZE);
     int baseRow = (boxId / BOX) * BOX;
     int baseCol = (boxId % BOX) * BOX;
@@ -117,22 +117,28 @@ vector<Cell> Grid::cellsInBox(int boxId) {
     return out;
 }
 
-vector<Cell> Grid::peersOf(int row, int col) {
-    set<Cell> seen;
+std::vector<Cell> Grid::peersOf(int row, int col) {
+    std::set<Cell> seen;
     for (auto& cell : cellsInRow(row)) seen.insert(cell);
     for (auto& cell : cellsInCol(col)) seen.insert(cell);
     for (auto& cell : cellsInBox(boxOf(row, col))) seen.insert(cell);
     seen.erase({row, col});
-    return vector<Cell>(seen.begin(), seen.end());
+    return std::vector<Cell>(seen.begin(), seen.end());
+}
+
+bool Grid::sees(Cell a, Cell b) {
+    if (a == b) return false;
+    return a.first == b.first || a.second == b.second ||
+           boxOf(a.first, a.second) == boxOf(b.first, b.second);
 }
 
 int Grid::popcount(uint16_t mask) {
-    return bitset<16>(mask).count();
+    return std::bitset<16>(mask).count();
 }
 
 int Grid::lowestSetDigit(uint16_t mask) {
     for (int d = 1; d <= SIZE; ++d) {
         if (mask & (1u << (d - 1))) return d;
     }
-    return 0;
+    return 0; // mask was empty
 }

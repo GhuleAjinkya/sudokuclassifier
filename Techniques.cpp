@@ -1,8 +1,8 @@
 #include "Techniques.h"
 #include <functional>
-using namespace std;
-vector<vector<Cell>> allUnits() {
-    vector<vector<Cell>> units;
+
+std::vector<std::vector<Cell>> allUnits() {
+    std::vector<std::vector<Cell>> units;
     units.reserve(27);
     for (int r = 0; r < SIZE; ++r) units.push_back(Grid::cellsInRow(r));
     for (int c = 0; c < SIZE; ++c) units.push_back(Grid::cellsInCol(c));
@@ -10,10 +10,11 @@ vector<vector<Cell>> allUnits() {
     return units;
 }
 
-static vector<vector<int>> combinations(int n, int k) {
-    vector<vector<int>> out;
-    vector<int> combo(k);
-    function<void(int, int)> rec = [&](int start, int chosen) {
+// All k-sized index combinations of [0, n).
+std::vector<std::vector<int>> combinations(int n, int k) {
+    std::vector<std::vector<int>> out;
+    std::vector<int> combo(k);
+    std::function<void(int, int)> rec = [&](int start, int chosen) {
         if (chosen == k) { out.push_back(combo); return; }
         for (int i = start; i < n; ++i) {
             combo[chosen] = i;
@@ -24,8 +25,9 @@ static vector<vector<int>> combinations(int n, int k) {
     return out;
 }
 
+// ---------------- Tier 1 ----------------
 
-bool DirectSingle::apply(Grid& grid, vector<PlacementLog>& log) {
+bool NakedSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
     bool changed = false;
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
@@ -42,7 +44,7 @@ bool DirectSingle::apply(Grid& grid, vector<PlacementLog>& log) {
     return changed;
 }
 
-bool HiddenSingle::apply(Grid& grid, vector<PlacementLog>& log) {
+bool HiddenSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
     bool changed = false;
     for (auto& unit : allUnits()) {
         for (int digit = 1; digit <= SIZE; ++digit) {
@@ -67,22 +69,23 @@ bool HiddenSingle::apply(Grid& grid, vector<PlacementLog>& log) {
     return changed;
 }
 
+// ---------------- Tier 2 ----------------
 
-DirectSubset::DirectSubset(int size) : size_(size) {
+NakedSubset::NakedSubset(int size) : size_(size) {
     switch (size) {
-        case 2: label_ = "Direct Pair"; break;
-        case 3: label_ = "Direct Triple"; break;
-        case 4: label_ = "Direct Quad"; break;
-        default: label_ = "Direct Subset(" + to_string(size) + ")";
+        case 2: label_ = "Naked Pair"; break;
+        case 3: label_ = "Naked Triple"; break;
+        case 4: label_ = "Naked Quad"; break;
+        default: label_ = "Naked Subset(" + std::to_string(size) + ")";
     }
 }
 
-bool DirectSubset::apply(Grid& grid, vector<PlacementLog>& log) {
-    (void)log; 
+bool NakedSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
+    (void)log; // this technique only eliminates candidates, it never places
     bool changed = false;
 
     for (auto& unit : allUnits()) {
-        vector<Cell> empties;
+        std::vector<Cell> empties;
         for (auto& cell : unit)
             if (grid.values[cell.first][cell.second] == 0) empties.push_back(cell);
 
@@ -94,9 +97,9 @@ bool DirectSubset::apply(Grid& grid, vector<PlacementLog>& log) {
                 auto [r, c] = empties[idx];
                 unionMask |= grid.candidates[r][c];
             }
-            if (Grid::popcount(unionMask) != size_) continue; 
+            if (Grid::popcount(unionMask) != size_) continue; // not a tight subset
 
-            vector<bool> inCombo(empties.size(), false);
+            std::vector<bool> inCombo(empties.size(), false);
             for (int idx : combo) inCombo[idx] = true;
 
             for (size_t i = 0; i < empties.size(); ++i) {
@@ -118,16 +121,17 @@ HiddenSubset::HiddenSubset(int size) : size_(size) {
         case 2: label_ = "Hidden Pair"; break;
         case 3: label_ = "Hidden Triple"; break;
         case 4: label_ = "Hidden Quad"; break;
-        default: label_ = "Hidden Subset(" + to_string(size) + ")";
+        default: label_ = "Hidden Subset(" + std::to_string(size) + ")";
     }
 }
 
-bool HiddenSubset::apply(Grid& grid, vector<PlacementLog>& log) {
+bool HiddenSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
     bool changed = false;
 
     for (auto& unit : allUnits()) {
-        vector<int> missingDigits;
+        // Digits not yet placed anywhere in this unit.
+        std::vector<int> missingDigits;
         for (int d = 1; d <= SIZE; ++d) {
             bool placedInUnit = false;
             for (auto& [r, c] : unit)
@@ -140,17 +144,18 @@ bool HiddenSubset::apply(Grid& grid, vector<PlacementLog>& log) {
             uint16_t digitMask = 0;
             for (int idx : combo) digitMask |= (1u << (missingDigits[idx] - 1));
 
-            vector<Cell> hostCells;
+            // Cells in the unit that could hold any of these digits.
+            std::vector<Cell> hostCells;
             for (auto& [r, c] : unit) {
                 if (grid.values[r][c] != 0) continue;
                 if (grid.candidates[r][c] & digitMask) hostCells.push_back({r, c});
             }
 
-            if (static_cast<int>(hostCells.size()) != size_) continue; 
+            if (static_cast<int>(hostCells.size()) != size_) continue; // not confined tightly enough
 
             for (auto& [r, c] : hostCells) {
                 uint16_t before = grid.candidates[r][c];
-                uint16_t after = before & digitMask;
+                uint16_t after = before & digitMask; // strip every candidate outside the subset
                 if (after != before) {
                     grid.candidates[r][c] = after;
                     changed = true;
@@ -161,7 +166,7 @@ bool HiddenSubset::apply(Grid& grid, vector<PlacementLog>& log) {
     return changed;
 }
 
-bool PointingPair::apply(Grid& grid, vector<PlacementLog>& log) {
+bool PointingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
     bool changed = false;
 
@@ -169,7 +174,7 @@ bool PointingPair::apply(Grid& grid, vector<PlacementLog>& log) {
         auto boxCells = Grid::cellsInBox(b);
         for (int digit = 1; digit <= SIZE; ++digit) {
             uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
-            vector<Cell> hosts;
+            std::vector<Cell> hosts;
             for (auto& [r, c] : boxCells)
                 if (grid.values[r][c] == 0 && (grid.candidates[r][c] & bit)) hosts.push_back({r, c});
 
@@ -184,7 +189,7 @@ bool PointingPair::apply(Grid& grid, vector<PlacementLog>& log) {
 
             if (sameRow) {
                 for (auto& [r, c] : Grid::cellsInRow(row0)) {
-                    if (Grid::boxOf(r, c) == b) continue; 
+                    if (Grid::boxOf(r, c) == b) continue; // skip the box itself
                     if (grid.eliminateCandidate(r, c, digit)) changed = true;
                 }
             }
@@ -199,14 +204,14 @@ bool PointingPair::apply(Grid& grid, vector<PlacementLog>& log) {
     return changed;
 }
 
-bool ClaimingPair::apply(Grid& grid, vector<PlacementLog>& log) {
+bool ClaimingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
     bool changed = false;
 
-    auto tryLine = [&](const vector<Cell>& line) {
+    auto tryLine = [&](const std::vector<Cell>& line) {
         for (int digit = 1; digit <= SIZE; ++digit) {
             uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
-            vector<Cell> hosts;
+            std::vector<Cell> hosts;
             for (auto& [r, c] : line)
                 if (grid.values[r][c] == 0 && (grid.candidates[r][c] & bit)) hosts.push_back({r, c});
 
@@ -223,7 +228,7 @@ bool ClaimingPair::apply(Grid& grid, vector<PlacementLog>& log) {
                 bool onLine = false;
                 for (auto& [lr, lc] : line)
                     if (lr == r && lc == c) { onLine = true; break; }
-                if (onLine) continue;
+                if (onLine) continue; // skip cells that are part of the line itself
                 if (grid.eliminateCandidate(r, c, digit)) changed = true;
             }
         }
