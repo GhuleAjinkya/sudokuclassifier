@@ -25,6 +25,9 @@ struct Grid {
 
     bool isSolved() const;
 
+    // True if some row/column/box already contains the same placed digit twice.
+    bool hasDuplicateValues() const;
+
     // Places `digit` at (row, col). Clears the cell's own candidates and strips
     // the digit bit from every peer's candidate set.
     // Returns false if the cell didn't actually have `digit` as a candidate
@@ -43,7 +46,7 @@ struct Grid {
     static std::vector<Cell> cellsInRow(int row);
     static std::vector<Cell> cellsInCol(int col);
     static std::vector<Cell> cellsInBox(int boxId);
-    static std::vector<Cell> peersOf(int row, int col);  // 20 unique peers, excludes self
+    static const std::vector<Cell>& peersOf(int row, int col);  // 20 unique peers, excludes self (cached table)
     static bool sees(Cell a, Cell b);                    // same row/col/box and not the same cell
 
     static int popcount(uint16_t mask);

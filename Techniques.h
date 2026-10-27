@@ -17,8 +17,9 @@ public:
     virtual ~Technique() = default;
     virtual std::string name() const = 0;
 
-    // Runs one full pass over the grid. Returns true if the grid changed
-    // (a digit was placed, or at least one candidate was eliminated).
+    // Finds and applies exactly ONE pattern (one placement, or one pattern's
+    // worth of eliminations), then returns true. Returns false if the technique
+    // finds nothing. One pattern per call is what makes step counts meaningful.
     virtual bool apply(Grid& grid, std::vector<PlacementLog>& log) = 0;
 };
 
@@ -83,7 +84,7 @@ public:
 };
 
 // All 27 units of the board: 9 rows, 9 columns, 9 boxes.
-std::vector<std::vector<Cell>> allUnits();
+const std::vector<std::vector<Cell>>& allUnits();  // built once, cached
 
 // All k-sized index combinations of [0, n). Shared by Tier 2 and Tier 3.
-std::vector<std::vector<int>> combinations(int n, int k);
+const std::vector<std::vector<int>>& combinations(int n, int k);  // cached (not thread-safe)

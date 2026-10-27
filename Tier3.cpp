@@ -56,7 +56,6 @@ Fish::Fish(int size) : size_(size) {
 
 bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
 
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int orient = 0; orient < 2; ++orient) {
@@ -78,6 +77,7 @@ bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
                 }
                 if (Grid::popcount(unionMask) != size_) continue; // base lines not confined to `size` cover lines
 
+                bool changed = false;
                 for (int line = 0; line < SIZE; ++line) {
                     if (inBase[line]) continue;
                     for (int pos = 0; pos < SIZE; ++pos) {
@@ -86,17 +86,17 @@ bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
                         if (grid.eliminateCandidate(r, c, digit)) changed = true;
                     }
                 }
+                if (changed) return true;
             }
         }
     }
-    return changed;
+    return false;
 }
 
 // ---------------- XY-Wing ----------------
 
 bool XYWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
 
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
@@ -122,19 +122,18 @@ bool XYWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     if (Grid::popcount(common) != 1 || (common & pivotMask)) continue;
 
                     int z = Grid::lowestSetDigit(common);
-                    if (eliminateSeenByAll(grid, {pincers[i], pincers[j]}, z)) changed = true;
+                    if (eliminateSeenByAll(grid, {pincers[i], pincers[j]}, z)) return true;
                 }
             }
         }
     }
-    return changed;
+    return false;
 }
 
 // ---------------- XYZ-Wing ----------------
 
 bool XYZWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
 
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
@@ -160,19 +159,18 @@ bool XYZWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     if (Grid::popcount(common) != 1) continue;
 
                     int z = Grid::lowestSetDigit(common);
-                    if (eliminateSeenByAll(grid, {pivot, pincers[i], pincers[j]}, z)) changed = true;
+                    if (eliminateSeenByAll(grid, {pivot, pincers[i], pincers[j]}, z)) return true;
                 }
             }
         }
     }
-    return changed;
+    return false;
 }
 
 // ---------------- Skyscraper ----------------
 
 bool Skyscraper::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
 
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int orient = 0; orient < 2; ++orient) {
@@ -192,19 +190,18 @@ bool Skyscraper::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     Cell endA = lineCell(orient, strongLines[a].first, Grid::lowestSetDigit(topA) - 1);
                     Cell endB = lineCell(orient, strongLines[b].first, Grid::lowestSetDigit(topB) - 1);
 
-                    if (eliminateSeenByAll(grid, {endA, endB}, digit)) changed = true;
+                    if (eliminateSeenByAll(grid, {endA, endB}, digit)) return true;
                 }
             }
         }
     }
-    return changed;
+    return false;
 }
 
 // ---------------- 2-String Kite ----------------
 
 bool TwoStringKite::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
 
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int row = 0; row < SIZE; ++row) {
@@ -231,20 +228,19 @@ bool TwoStringKite::apply(Grid& grid, std::vector<PlacementLog>& log) {
                         if (Grid::boxOf(r1.first, r1.second) != Grid::boxOf(k1.first, k1.second)) continue;
 
                         // r1 and k1 can't both be true (same box), so r2 or k2 must be.
-                        if (eliminateSeenByAll(grid, {r2, k2}, digit)) changed = true;
+                        if (eliminateSeenByAll(grid, {r2, k2}, digit)) return true;
                     }
                 }
             }
         }
     }
-    return changed;
+    return false;
 }
 
 // ---------------- Simple Coloring ----------------
 
 bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
     (void)log;
-    bool changed = false;
     auto idx = [](Cell c) { return c.first * SIZE + c.second; };
 
     for (int digit = 1; digit <= SIZE; ++digit) {
@@ -286,20 +282,22 @@ bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
             for (int m : members) byColor[color[m]].push_back({m / SIZE, m % SIZE});
 
             // Rule "wrap": two same-colored cells that see each other => that color is false.
-            bool wrapped = false;
-            for (int k = 0; k < 2 && !wrapped; ++k) {
+            for (int k = 0; k < 2; ++k) {
                 auto& cells = byColor[k];
+                bool wrapped = false;
                 for (size_t a = 0; a < cells.size() && !wrapped; ++a)
                     for (size_t b = a + 1; b < cells.size() && !wrapped; ++b)
                         if (Grid::sees(cells[a], cells[b])) wrapped = true;
                 if (wrapped) {
+                    bool changed = false;
                     for (auto& cell : cells)
                         if (grid.eliminateCandidate(cell.first, cell.second, digit)) changed = true;
+                    if (changed) return true;
                 }
             }
-            if (wrapped) continue;
 
             // Rule "trap": a cell outside the chain that sees both colors can't hold the digit.
+            bool changed = false;
             for (int r = 0; r < SIZE; ++r) {
                 for (int c = 0; c < SIZE; ++c) {
                     Cell x{r, c};
@@ -311,7 +309,8 @@ bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     if (seesColor[0] && seesColor[1] && grid.eliminateCandidate(r, c, digit)) changed = true;
                 }
             }
+            if (changed) return true;
         }
     }
-    return changed;
+    return false;
 }

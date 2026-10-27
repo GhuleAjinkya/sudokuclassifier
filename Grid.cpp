@@ -117,13 +117,41 @@ std::vector<Cell> Grid::cellsInBox(int boxId) {
     return out;
 }
 
-std::vector<Cell> Grid::peersOf(int row, int col) {
-    std::set<Cell> seen;
-    for (auto& cell : cellsInRow(row)) seen.insert(cell);
-    for (auto& cell : cellsInCol(col)) seen.insert(cell);
-    for (auto& cell : cellsInBox(boxOf(row, col))) seen.insert(cell);
-    seen.erase({row, col});
-    return std::vector<Cell>(seen.begin(), seen.end());
+const std::vector<Cell>& Grid::peersOf(int row, int col) {
+    // Built once; place() calls this constantly (hot path during search).
+    static const std::vector<std::vector<Cell>> table = [] {
+        std::vector<std::vector<Cell>> t(SIZE * SIZE);
+        for (int r = 0; r < SIZE; ++r) {
+            for (int c = 0; c < SIZE; ++c) {
+                std::set<Cell> seen;
+                for (auto& cell : cellsInRow(r)) seen.insert(cell);
+                for (auto& cell : cellsInCol(c)) seen.insert(cell);
+                for (auto& cell : cellsInBox(boxOf(r, c))) seen.insert(cell);
+                seen.erase({r, c});
+                t[r * SIZE + c] = std::vector<Cell>(seen.begin(), seen.end());
+            }
+        }
+        return t;
+    }();
+    return table[row * SIZE + col];
+}
+
+bool Grid::hasDuplicateValues() const {
+    auto unitHasDuplicate = [&](const std::vector<Cell>& unit) {
+        uint16_t seen = 0;
+        for (auto& [r, c] : unit) {
+            int v = values[r][c];
+            if (v == 0) continue;
+            uint16_t bit = static_cast<uint16_t>(1u << (v - 1));
+            if (seen & bit) return true;
+            seen |= bit;
+        }
+        return false;
+    };
+    for (int i = 0; i < SIZE; ++i)
+        if (unitHasDuplicate(cellsInRow(i)) || unitHasDuplicate(cellsInCol(i)) || unitHasDuplicate(cellsInBox(i)))
+            return true;
+    return false;
 }
 
 bool Grid::sees(Cell a, Cell b) {
