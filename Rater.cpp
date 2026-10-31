@@ -92,18 +92,18 @@ std::string Rater::configText() const {
     o << "# Rating configuration. Lines are 'key = value'; '#' starts a comment.\n"
       << "# Difficulty score = sum(weight x steps per technique) + search penalty.\n"
       << "# A value below the 'medium' threshold rates Low/Short, below 'high'/'long' rates Medium, else High/Long.\n\n"
-      << "# --- technique weights (points per logic step) ---\n";
+      << "# technique weights (points per logic step)\n";
     for (auto& [name, w] : weights) o << "weight." << name << " = " << w << "\n";
-    o << "\n# --- Tier 4 (guessing) penalty ---\n"
+    o << "\n# Tier 4 (guessing) penalty \n"
       << "search.base = " << searchBase << "\n"
       << "search.perDepth = " << searchPerDepth << "\n"
-      << "\n# --- difficulty bands (on the weighted score) ---\n"
+      << "\n# difficulty bands (on the weighted score)\n"
       << "difficulty.medium = " << difficultyMedium << "\n"
       << "difficulty.high = " << difficultyHigh << "\n"
-      << "\n# --- length bands (logic steps + cells filled by search) ---\n"
+      << "\n# length bands (logic steps + cells filled by search)\n"
       << "length.medium = " << lengthMedium << "\n"
       << "length.long = " << lengthLong << "\n"
-      << "\n# --- complexity bands (technique probes + search assignments) ---\n"
+      << "\n# complexity bands (technique probes + search assignments)\n"
       << "complexity.medium = " << complexityMedium << "\n"
       << "complexity.high = " << complexityHigh << "\n";
     return o.str();

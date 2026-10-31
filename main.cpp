@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         if (uniq.solutionCount == 0) {
             // Contradictory or unsolvable: there is nothing meaningful to rate.
             ++noSolutionCount;
-            if (detailed) { std::cout << "--- Starting Grid ---\n"; original.print(); std::cout << "\n"; }
+            if (detailed) { std::cout << "Starting Grid\n"; original.print(); std::cout << "\n"; }
             std::cout << "#" << n + 1 << "  NO SOLUTION (contradictory or unsolvable puzzle) | not rated\n";
             continue;
         }
@@ -125,19 +125,19 @@ int main(int argc, char** argv) {
         Rating rating = rater.rate(st);
 
         if (detailed) {
-            std::cout << "--- Starting Grid ---\n";
+            std::cout << "Starting Grid\n";
             original.print();
             std::cout << "\n";
         }
         if (verbose || detailed) {
-            std::cout << "--- Placements (" << log.size() << ") ---\n";
+            std::cout << "Placements (" << log.size() << ")\n";
             for (auto& e : log)
                 std::cout << "Placed " << e.digit << " at (row " << e.row + 1 << ", col " << e.col + 1
                           << ") via " << e.method << "\n";
             std::cout << "\n";
         }
         if (detailed) {
-            std::cout << "--- Final Grid ---\n";
+            std::cout << "Final Grid\n";
             grid.print();
             std::cout << "\n";
         }
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
         for (auto* k : order) std::cout << "  " << k << " " << m[k];
         std::cout << "\n";
     };
-    std::cout << "\n=== Summary (" << source << ", " << puzzles.size() << " puzzles) ===\n"
+    std::cout << "\nSummary (" << source << ", " << puzzles.size() << " puzzles)\n"
               << "Solved: " << solvedCount << "  (needed search: " << usedSearchCount << ")\n"
               << "Uniqueness: " << uniqueCount << " unique, " << multipleCount << " multiple-solution, "
               << noSolutionCount << " no-solution\n";
