@@ -1,2 +1,5 @@
 placement techniques which are printed are wrong
-build ui
+separate out the actual sudoku grid from the buttons and tabs about generating/analyzing/solving puzzle and place in a column to the right.
+squish difficulty report in width and add a separate column for the what it took to solve. remove the text writeup explaining difficulty
+add colours for visualizer for each tier
+backtracking should show incorrect steps
