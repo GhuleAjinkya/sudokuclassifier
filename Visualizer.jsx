@@ -1,25 +1,40 @@
-import React, { useEffect, useState } from 'react';
-import { SEARCH_NAME, TIER_STYLE, blurbOf, tierOf } from './techniqueInfo.js';
+import React, { useEffect, useMemo, useState } from 'react';
+import { frameColor } from './replay.js';
 
 const SPEEDS = [
   { label: 'Slow', ms: 1200 },
   { label: 'Normal', ms: 650 },
   { label: 'Fast', ms: 300 },
   { label: 'Very fast', ms: 100 },
+  { label: 'Turbo', ms: 25 },
 ];
 
-// Replays the solver's placements one at a time. The board itself is drawn by the parent;
-// this component owns the playback controls and the explanation of the current step.
-export default function Visualizer({ analysis, audit, step, setStep }) {
-  const placements = analysis.placements;
-  const total = placements.length;
+// One colour band per run of same-coloured frames, so even a long search draws as a single cheap element.
+function runsGradient(frames) {
+  if (frames.length === 0) return '#e5e7eb';
+  const stops = [];
+  let start = 0;
+  for (let i = 1; i <= frames.length; i++) {
+    if (i === frames.length || frameColor(frames[i]) !== frameColor(frames[start])) {
+      const a = ((start / frames.length) * 100).toFixed(3);
+      const b = ((i / frames.length) * 100).toFixed(3);
+      stops.push(`${frameColor(frames[start])} ${a}% ${b}%`);
+      start = i;
+    }
+  }
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}
+
+// Playback controls only. The board and the step caption are drawn elsewhere, from the same `step`.
+export default function Visualizer({ frames, step, setStep, showCandidates, setShowCandidates }) {
+  const total = frames.length;
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
 
-  // A new analysis starts paused.
+  // A new result starts paused.
   useEffect(() => {
     setPlaying(false);
-  }, [analysis]);
+  }, [frames]);
 
   useEffect(() => {
     if (!playing) return undefined;
@@ -31,6 +46,11 @@ export default function Visualizer({ analysis, audit, step, setStep }) {
     if (playing && step >= total) setPlaying(false);
   }, [playing, step, total]);
 
+  const gradient = useMemo(() => runsGradient(frames), [frames]);
+  const logicCount = frames.filter((f) => f.phase === 'logic').length;
+  const searchCount = total - logicCount;
+  const wrongTurns = frames.filter((f) => f.type === 'backtrack').length;
+
   const togglePlay = () => {
     if (playing) {
       setPlaying(false);
@@ -39,48 +59,54 @@ export default function Visualizer({ analysis, audit, step, setStep }) {
     if (step >= total) setStep(0);
     setPlaying(true);
   };
-
-  const current = step > 0 ? placements[step - 1] : null;
-  const tier = current ? tierOf(current.method) : null;
-  const tiersPresent = [...new Set(placements.map((p) => tierOf(p.method)))].sort();
-  const flagged = current ? audit[step - 1] : null;
-  const flaggedCount = audit.filter(Boolean).length;
+  const go = (n) => {
+    setPlaying(false);
+    setStep(Math.max(0, Math.min(n, total)));
+  };
 
   return (
     <div className="visualizer">
       <div className="viz-head">
         <h3>Solve visualizer</h3>
-        <span className="muted small">{step} / {total} placements</span>
+        <span className="muted small">step {step} / {total}</span>
       </div>
 
-      <div className="timeline" role="group" aria-label="Timeline of placements">
-        {placements.map((p, i) => {
-          const t = TIER_STYLE[tierOf(p.method)];
-          return (
-            <button
-              key={i}
-              type="button"
-              className={`tick${i < step ? ' done' : ''}${i === step - 1 ? ' now' : ''}${audit[i] ? ' flag' : ''}`}
-              style={{ backgroundColor: t.color }}
-              title={`Step ${i + 1}: ${p.method}${audit[i] ? ' (needed earlier eliminations)' : ''}`}
-              aria-label={`Go to step ${i + 1}`}
-              onClick={() => {
-                setPlaying(false);
-                setStep(i + 1);
-              }}
-            />
-          );
-        })}
+      <div className="timeline">
+        <div className="timeline-bar" style={{ background: gradient }} />
+        <div className="timeline-future" style={{ left: `${total ? (step / total) * 100 : 0}%` }} />
+        <input
+          type="range"
+          min={0}
+          max={total}
+          value={step}
+          aria-label="Position in the solve"
+          onChange={(e) => go(Number(e.target.value))}
+        />
+      </div>
+      <div className="phases muted small">
+        <span style={{ flexGrow: Math.max(logicCount, 1) }}>Logic · {logicCount} steps</span>
+        {searchCount > 0 && (
+          <span style={{ flexGrow: Math.max(searchCount, 1) }}>
+            Search · {searchCount} events{wrongTurns > 0 ? ` · ${wrongTurns} wrong turn${wrongTurns === 1 ? '' : 's'}` : ''}
+          </span>
+        )}
       </div>
 
       <div className="controls">
-        <button type="button" onClick={() => { setPlaying(false); setStep(0); }} disabled={step === 0}>Reset</button>
-        <button type="button" onClick={() => { setPlaying(false); setStep(Math.max(step - 1, 0)); }} disabled={step === 0}>Back</button>
+        <button type="button" onClick={() => go(0)} disabled={step === 0}>Reset</button>
+        <button type="button" onClick={() => go(step - 1)} disabled={step === 0}>Back</button>
         <button type="button" className="primary" onClick={togglePlay}>
           {playing ? 'Pause' : step >= total ? 'Replay' : 'Play'}
         </button>
-        <button type="button" onClick={() => { setPlaying(false); setStep(Math.min(step + 1, total)); }} disabled={step >= total}>Next</button>
-        <button type="button" onClick={() => { setPlaying(false); setStep(total); }} disabled={step >= total}>Finish</button>
+        <button type="button" onClick={() => go(step + 1)} disabled={step >= total}>Next</button>
+        <button type="button" onClick={() => go(total)} disabled={step >= total}>Finish</button>
+      </div>
+
+      <div className="row between">
+        <label className="check">
+          <input type="checkbox" checked={showCandidates} onChange={(e) => setShowCandidates(e.target.checked)} />
+          Show candidates
+        </label>
         <label className="speed">
           <span className="muted small">Speed</span>
           <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
@@ -90,51 +116,6 @@ export default function Visualizer({ analysis, audit, step, setStep }) {
           </select>
         </label>
       </div>
-
-      <div className="caption" aria-live="polite">
-        {current ? (
-          <>
-            <div>
-              <strong>Step {step}:</strong> placed <strong>{current.digit}</strong> at row {current.row + 1}, column {current.col + 1}
-            </div>
-            <div className="chips">
-              <span className="chip" style={{ color: TIER_STYLE[tier].color, backgroundColor: TIER_STYLE[tier].bg }}>
-                {current.method}
-              </span>
-              <span className="muted small">{TIER_STYLE[tier].label}</span>
-            </div>
-            <p className="muted small">{blurbOf(current.method)}</p>
-            {flagged && (
-              <p className="notice info">
-                Heads-up: on a plain grid this cell still has candidates {flagged.candidates.join(', ')}. It only became a{' '}
-                {current.method.toLowerCase()} after earlier eliminations (pairs, pointing/claiming or wing patterns) that the
-                solver's placement log does not print.
-              </p>
-            )}
-            {current.method === SEARCH_NAME && (
-              <p className="muted small">
-                The solver does not record the order of its guesses, so cells filled by the search phase appear in reading order.
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="muted">Press <strong>Play</strong> to watch the solver fill in {total} cells, or step through with <strong>Next</strong>.</p>
-        )}
-      </div>
-
-      <div className="legend">
-        {tiersPresent.map((t) => (
-          <span key={t} className="legend-item">
-            <span className="swatch" style={{ backgroundColor: TIER_STYLE[t].bg, borderColor: TIER_STYLE[t].color }} />
-            {TIER_STYLE[t].label}
-          </span>
-        ))}
-      </div>
-      <p className="muted small">
-        The visualizer shows digits being placed. Candidate eliminations that happen between placements are not shown.
-        {flaggedCount > 0 &&
-          ` ${flaggedCount} of ${total} placements depended on such eliminations; their ticks have a pale bottom edge.`}
-      </p>
     </div>
   );
 }

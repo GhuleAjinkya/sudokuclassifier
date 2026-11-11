@@ -1,4 +1,5 @@
 #include "Techniques.h"
+#include <algorithm>
 #include <functional>
 #include <map>
 
@@ -34,16 +35,35 @@ const std::vector<std::vector<int>>& combinations(int n, int k) {
     return cache.emplace(key, std::move(out)).first->second;
 }
 
+std::vector<int> digitsOf(uint16_t mask) {
+    std::vector<int> out;
+    for (int d = 1; d <= SIZE; ++d)
+        if (mask & (1u << (d - 1))) out.push_back(d);
+    return out;
+}
+
+std::string unitName(int unitIndex) {
+    if (unitIndex < SIZE) return "row " + std::to_string(unitIndex + 1);
+    if (unitIndex < 2 * SIZE) return "column " + std::to_string(unitIndex - SIZE + 1);
+    return "box " + std::to_string(unitIndex - 2 * SIZE + 1);
+}
+
+namespace {
+bool contains(const std::vector<Cell>& cells, const Cell& cell) {
+    return std::find(cells.begin(), cells.end(), cell) != cells.end();
+}
+} // namespace
+
 // ---------------- Tier 1 ----------------
 
-bool NakedSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
+bool NakedSingle::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
             if (grid.values[r][c] != 0) continue;
             if (Grid::popcount(grid.candidates[r][c]) == 1) {
                 int digit = Grid::lowestSetDigit(grid.candidates[r][c]);
                 if (grid.place(r, c, digit)) {
-                    log.push_back({r, c, digit, name()});
+                    log.push_back(StepLog::placement(name(), r, c, digit));
                     return true;
                 }
             }
@@ -52,8 +72,10 @@ bool NakedSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
     return false;
 }
 
-bool HiddenSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    for (auto& unit : allUnits()) {
+bool HiddenSingle::apply(Grid& grid, std::vector<StepLog>& log) {
+    const auto& units = allUnits();
+    for (size_t u = 0; u < units.size(); ++u) {
+        const auto& unit = units[u];
         for (int digit = 1; digit <= SIZE; ++digit) {
             uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
             int candidateCount = 0;
@@ -67,7 +89,7 @@ bool HiddenSingle::apply(Grid& grid, std::vector<PlacementLog>& log) {
             if (candidateCount == 1) {
                 auto [r, c] = only;
                 if (grid.place(r, c, digit)) {
-                    log.push_back({r, c, digit, name()});
+                    log.push_back(StepLog::placement(name(), r, c, digit, "only place for " + std::to_string(digit) + " in " + unitName(static_cast<int>(u))));
                     return true;
                 }
             }
@@ -87,9 +109,10 @@ NakedSubset::NakedSubset(int size) : size_(size) {
     }
 }
 
-bool NakedSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log; // eliminates candidates only
-    for (auto& unit : allUnits()) {
+bool NakedSubset::apply(Grid& grid, std::vector<StepLog>& log) {
+    const auto& units = allUnits();
+    for (size_t u = 0; u < units.size(); ++u) {
+        const auto& unit = units[u];
         std::vector<Cell> empties;
         for (auto& cell : unit)
             if (grid.values[cell.first][cell.second] == 0) empties.push_back(cell);
@@ -104,20 +127,31 @@ bool NakedSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
             }
             if (Grid::popcount(unionMask) != size_) continue; // not a tight subset
 
+            // Evidence: the pair/triple cells hold nothing outside the subset's digits.
+            std::vector<Removal> evidence;
+            for (int idx : combo) {
+                auto [r, c] = empties[idx];
+                for (int e = 1; e <= SIZE; ++e)
+                    if (!(unionMask & (1u << (e - 1)))) addAbsence(grid, evidence, r, c, e);
+            }
+
             std::vector<bool> inCombo(empties.size(), false);
             for (int idx : combo) inCombo[idx] = true;
 
-            bool changed = false;
+            std::vector<Removal> removed;
             for (size_t i = 0; i < empties.size(); ++i) {
                 if (inCombo[i]) continue;
                 auto [r, c] = empties[i];
                 for (int d = 1; d <= SIZE; ++d) {
-                    if (unionMask & (1u << (d - 1))) {
-                        if (grid.eliminateCandidate(r, c, d)) changed = true;
-                    }
+                    if (unionMask & (1u << (d - 1))) removeCandidate(grid, removed, r, c, d);
                 }
             }
-            if (changed) return true; // one pattern applied
+            if (!removed.empty()) { // one pattern applied
+                std::vector<Cell> pattern;
+                for (int idx : combo) pattern.push_back(empties[idx]);
+                log.push_back(StepLog::elimination(name(), pattern, digitsOf(unionMask), removed, evidence, "in " + unitName(static_cast<int>(u))));
+                return true;
+            }
         }
     }
     return false;
@@ -132,9 +166,10 @@ HiddenSubset::HiddenSubset(int size) : size_(size) {
     }
 }
 
-bool HiddenSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-    for (auto& unit : allUnits()) {
+bool HiddenSubset::apply(Grid& grid, std::vector<StepLog>& log) {
+    const auto& units = allUnits();
+    for (size_t u = 0; u < units.size(); ++u) {
+        const auto& unit = units[u];
         // Digits not yet placed anywhere in this unit.
         std::vector<int> missingDigits;
         for (int d = 1; d <= SIZE; ++d) {
@@ -158,23 +193,27 @@ bool HiddenSubset::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
             if (static_cast<int>(hostCells.size()) != size_) continue; // not confined tightly enough
 
-            bool changed = false;
+            // Evidence: these digits are missing from every other cell of the unit.
+            std::vector<Removal> evidence;
+            for (int d : digitsOf(digitMask))
+                for (auto& [r, c] : unit)
+                    if (!contains(hostCells, {r, c})) addAbsence(grid, evidence, r, c, d);
+
+            std::vector<Removal> removed;
             for (auto& [r, c] : hostCells) {
-                uint16_t before = grid.candidates[r][c];
-                uint16_t after = before & digitMask; // strip every candidate outside the subset
-                if (after != before) {
-                    grid.candidates[r][c] = after;
-                    changed = true;
-                }
+                uint16_t extra = grid.candidates[r][c] & static_cast<uint16_t>(~digitMask); // every candidate outside the subset
+                for (int d : digitsOf(extra)) removeCandidate(grid, removed, r, c, d);
             }
-            if (changed) return true;
+            if (!removed.empty()) {
+                log.push_back(StepLog::elimination(name(), hostCells, digitsOf(digitMask), removed, evidence, "in " + unitName(static_cast<int>(u))));
+                return true;
+            }
         }
     }
     return false;
 }
 
-bool PointingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
+bool PointingPair::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int b = 0; b < SIZE; ++b) {
         auto boxCells = Grid::cellsInBox(b);
         for (int digit = 1; digit <= SIZE; ++digit) {
@@ -191,31 +230,41 @@ bool PointingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
                 if (r != row0) sameRow = false;
                 if (c != col0) sameCol = false;
             }
+            if (!sameRow && !sameCol) continue;
 
-            bool changed = false;
+            // Evidence: the digit is missing from every other cell of the box.
+            std::vector<Removal> evidence;
+            for (auto& [r, c] : boxCells)
+                if (!contains(hosts, {r, c})) addAbsence(grid, evidence, r, c, digit);
+
+            std::vector<Removal> removed;
+            std::string detail;
             if (sameRow) {
                 for (auto& [r, c] : Grid::cellsInRow(row0)) {
                     if (Grid::boxOf(r, c) == b) continue; // skip the box itself
-                    if (grid.eliminateCandidate(r, c, digit)) changed = true;
+                    removeCandidate(grid, removed, r, c, digit);
                 }
+                detail = "box " + std::to_string(b + 1) + " points along row " + std::to_string(row0 + 1);
             }
             if (sameCol) {
                 for (auto& [r, c] : Grid::cellsInCol(col0)) {
                     if (Grid::boxOf(r, c) == b) continue;
-                    if (grid.eliminateCandidate(r, c, digit)) changed = true;
+                    removeCandidate(grid, removed, r, c, digit);
                 }
+                detail = "box " + std::to_string(b + 1) + " points along column " + std::to_string(col0 + 1);
             }
-            if (changed) return true;
+            if (!removed.empty()) {
+                log.push_back(StepLog::elimination(name(), hosts, {digit}, removed, evidence, detail));
+                return true;
+            }
         }
     }
     return false;
 }
 
-bool ClaimingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool ClaimingPair::apply(Grid& grid, std::vector<StepLog>& log) {
     // Returns true as soon as one digit on this line produces eliminations.
-    auto tryLine = [&](const std::vector<Cell>& line) -> bool {
+    auto tryLine = [&](const std::vector<Cell>& line, const std::string& lineName) -> bool {
         for (int digit = 1; digit <= SIZE; ++digit) {
             uint16_t bit = static_cast<uint16_t>(1u << (digit - 1));
             std::vector<Cell> hosts;
@@ -230,20 +279,29 @@ bool ClaimingPair::apply(Grid& grid, std::vector<PlacementLog>& log) {
                 if (Grid::boxOf(r, c) != box0) { sameBox = false; break; }
             if (!sameBox) continue;
 
-            bool changed = false;
+            // Evidence: the digit is missing from every other cell of the line.
+            std::vector<Removal> evidence;
+            for (auto& [r, c] : line)
+                if (!contains(hosts, {r, c})) addAbsence(grid, evidence, r, c, digit);
+
+            std::vector<Removal> removed;
             for (auto& [r, c] : Grid::cellsInBox(box0)) {
                 bool onLine = false;
                 for (auto& [lr, lc] : line)
                     if (lr == r && lc == c) { onLine = true; break; }
                 if (onLine) continue; // skip cells that are part of the line itself
-                if (grid.eliminateCandidate(r, c, digit)) changed = true;
+                removeCandidate(grid, removed, r, c, digit);
             }
-            if (changed) return true;
+            if (!removed.empty()) {
+                log.push_back(StepLog::elimination(name(), hosts, {digit}, removed, evidence,
+                                                   lineName + " is confined to box " + std::to_string(box0 + 1)));
+                return true;
+            }
         }
         return false;
     };
 
-    for (int r = 0; r < SIZE; ++r) if (tryLine(Grid::cellsInRow(r))) return true;
-    for (int c = 0; c < SIZE; ++c) if (tryLine(Grid::cellsInCol(c))) return true;
+    for (int r = 0; r < SIZE; ++r) if (tryLine(Grid::cellsInRow(r), "row " + std::to_string(r + 1))) return true;
+    for (int c = 0; c < SIZE; ++c) if (tryLine(Grid::cellsInCol(c), "column " + std::to_string(c + 1))) return true;
     return false;
 }

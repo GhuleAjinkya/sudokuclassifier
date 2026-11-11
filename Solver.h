@@ -1,6 +1,7 @@
 #pragma once
 #include "Grid.h"
 #include "Techniques.h"
+#include "Tier4.h"
 #include <functional>
 #include <map>
 #include <memory>
@@ -19,6 +20,7 @@ struct SolveStats {
     int  searchCells = 0;       // cells that were filled by search rather than logic
     long guesses = 0;           // search nodes
     long searchAssignments = 0; // every digit placed during search (guesses + forced placements)
+    long searchDeadEnds = 0;    // branches of the search that ended in a contradiction (wrong turns)
     int  searchDepth = 0;       // deepest guess nesting
     int  firstBranching = 0;    // candidates at the first guessed cell
 
@@ -35,9 +37,15 @@ public:
     // stalls, falls back to Tier 4 search (unless disabled).
     // Returns true if the grid ended up fully solved (check stats().usedSearch to see
     // whether guessing was needed).
-    bool solve(Grid& grid, std::vector<PlacementLog>& log);
+    bool solve(Grid& grid, std::vector<StepLog>& log);
 
     void setSearchEnabled(bool on) { searchEnabled_ = on; }
+
+    // When on, solve() keeps the full search trace (every guess, forced placement, dead end and undo)
+    // so the wrong turns can be shown. Off by default: it is only needed for display.
+    void setRecordSearchTrace(bool on) { recordSearchTrace_ = on; }
+    const std::vector<SearchEvent>& searchTrace() const { return searchTrace_; }
+    bool searchTraceTruncated() const { return searchTraceTruncated_; }
     const SolveStats& stats() const { return stats_; }
 
     // Optional hook, called after every successful logic step with the technique name
@@ -53,5 +61,8 @@ private:
     std::vector<Entry> techniques_;   // in priority order (simplest first)
     SolveStats stats_;
     bool searchEnabled_ = true;
+    bool recordSearchTrace_ = false;
+    std::vector<SearchEvent> searchTrace_;
+    bool searchTraceTruncated_ = false;
     StepObserver observer_;
 };

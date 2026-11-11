@@ -1,4 +1,5 @@
 #include "Tier3.h"
+#include <algorithm>
 #include <array>
 #include <queue>
 
@@ -25,9 +26,10 @@ uint16_t linePositions(const Grid& g, int orient, int line, int digit) {
     return m;
 }
 
-// Eliminates `digit` from every cell that sees all of `anchors`.
-bool eliminateSeenByAll(Grid& g, const std::vector<Cell>& anchors, int digit) {
-    bool changed = false;
+// Eliminates `digit` from every cell that sees all of `anchors`, recording each removal.
+// Returns true if anything was removed by this call.
+bool eliminateSeenByAll(Grid& g, const std::vector<Cell>& anchors, int digit, std::vector<Removal>& removed) {
+    const size_t before = removed.size();
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
             Cell x{r, c};
@@ -35,10 +37,41 @@ bool eliminateSeenByAll(Grid& g, const std::vector<Cell>& anchors, int digit) {
             bool seesAll = true;
             for (auto& a : anchors)
                 if (!Grid::sees(x, a)) { seesAll = false; break; }
-            if (seesAll && g.eliminateCandidate(r, c, digit)) changed = true;
+            if (seesAll) removeCandidate(g, removed, r, c, digit);
         }
     }
-    return changed;
+    return removed.size() > before;
+}
+
+// Appends `cell` unless it is already present (a pattern may reuse a cell).
+void addUnique(std::vector<Cell>& cells, Cell cell) {
+    if (std::find(cells.begin(), cells.end(), cell) == cells.end()) cells.push_back(cell);
+}
+
+// Evidence: every digit that is NOT a candidate in `cell`, other than the ones in `keep`.
+// (This is what makes a wing's pivot or pincer "bi-value": all its other digits are gone.)
+void absentExcept(const Grid& g, std::vector<Removal>& evidence, Cell cell, uint16_t keep) {
+    for (int e = 1; e <= SIZE; ++e)
+        if (!(keep & digitBit(e))) addAbsence(g, evidence, cell.first, cell.second, e);
+}
+
+// Evidence: `digit` is missing from the cells of a line that are not in `holders`.
+void absentOnLine(const Grid& g, std::vector<Removal>& evidence, int orient, int line, uint16_t holders, int digit) {
+    for (int pos = 0; pos < SIZE; ++pos)
+        if (!(holders & (1u << pos))) {
+            Cell cell = lineCell(orient, line, pos);
+            addAbsence(g, evidence, cell.first, cell.second, digit);
+        }
+}
+
+// "2, 5, 7" from 0-based indices.
+std::string listOneBased(const std::vector<int>& zeroBased) {
+    std::string s;
+    for (size_t i = 0; i < zeroBased.size(); ++i) {
+        if (i) s += ", ";
+        s += std::to_string(zeroBased[i] + 1);
+    }
+    return s;
 }
 
 } // namespace
@@ -54,9 +87,7 @@ Fish::Fish(int size) : size_(size) {
     }
 }
 
-bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool Fish::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int orient = 0; orient < 2; ++orient) {
             std::array<uint16_t, SIZE> posMask{};
@@ -77,16 +108,36 @@ bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
                 }
                 if (Grid::popcount(unionMask) != size_) continue; // base lines not confined to `size` cover lines
 
-                bool changed = false;
+                // Evidence: in each base line the digit is missing outside the cover lines.
+                std::vector<Removal> evidence;
+                for (int idx : combo) absentOnLine(grid, evidence, orient, eligible[idx], unionMask, digit);
+
+                std::vector<Removal> removed;
                 for (int line = 0; line < SIZE; ++line) {
                     if (inBase[line]) continue;
                     for (int pos = 0; pos < SIZE; ++pos) {
                         if (!(unionMask & (1u << pos))) continue;
                         auto [r, c] = lineCell(orient, line, pos);
-                        if (grid.eliminateCandidate(r, c, digit)) changed = true;
+                        removeCandidate(grid, removed, r, c, digit);
                     }
                 }
-                if (changed) return true;
+                if (!removed.empty()) {
+                    // The fish itself: the digit's candidate cells in the base lines.
+                    std::vector<Cell> pattern;
+                    std::vector<int> baseLines, coverLines;
+                    for (int idx : combo) {
+                        int line = eligible[idx];
+                        baseLines.push_back(line);
+                        for (int pos = 0; pos < SIZE; ++pos)
+                            if (posMask[line] & (1u << pos)) pattern.push_back(lineCell(orient, line, pos));
+                    }
+                    for (int pos = 0; pos < SIZE; ++pos)
+                        if (unionMask & (1u << pos)) coverLines.push_back(pos);
+                    std::string detail = std::string(orient == 0 ? "rows " : "columns ") + listOneBased(baseLines) +
+                                         (orient == 0 ? " cover columns " : " cover rows ") + listOneBased(coverLines);
+                    log.push_back(StepLog::elimination(name(), pattern, {digit}, removed, evidence, detail));
+                    return true;
+                }
             }
         }
     }
@@ -95,9 +146,7 @@ bool Fish::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
 // ---------------- XY-Wing ----------------
 
-bool XYWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool XYWing::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
             if (grid.values[r][c] != 0) continue;
@@ -122,7 +171,20 @@ bool XYWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     if (Grid::popcount(common) != 1 || (common & pivotMask)) continue;
 
                     int z = Grid::lowestSetDigit(common);
-                    if (eliminateSeenByAll(grid, {pincers[i], pincers[j]}, z)) return true;
+
+                    // Evidence: the pivot and both wings hold only their two digits.
+                    std::vector<Removal> evidence;
+                    absentExcept(grid, evidence, pivot, pivotMask);
+                    absentExcept(grid, evidence, pincers[i], m1);
+                    absentExcept(grid, evidence, pincers[j], m2);
+
+                    std::vector<Removal> removed;
+                    if (eliminateSeenByAll(grid, {pincers[i], pincers[j]}, z, removed)) {
+                        log.push_back(StepLog::elimination(name(), {pivot, pincers[i], pincers[j]},
+                                                           digitsOf(pivotMask | common), removed, evidence,
+                                                           "cells that see both wings lose " + std::to_string(z)));
+                        return true;
+                    }
                 }
             }
         }
@@ -132,9 +194,7 @@ bool XYWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
 // ---------------- XYZ-Wing ----------------
 
-bool XYZWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool XYZWing::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int r = 0; r < SIZE; ++r) {
         for (int c = 0; c < SIZE; ++c) {
             if (grid.values[r][c] != 0) continue;
@@ -159,7 +219,19 @@ bool XYZWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     if (Grid::popcount(common) != 1) continue;
 
                     int z = Grid::lowestSetDigit(common);
-                    if (eliminateSeenByAll(grid, {pivot, pincers[i], pincers[j]}, z)) return true;
+
+                    std::vector<Removal> evidence;
+                    absentExcept(grid, evidence, pivot, pivotMask);
+                    absentExcept(grid, evidence, pincers[i], m1);
+                    absentExcept(grid, evidence, pincers[j], m2);
+
+                    std::vector<Removal> removed;
+                    if (eliminateSeenByAll(grid, {pivot, pincers[i], pincers[j]}, z, removed)) {
+                        log.push_back(StepLog::elimination(name(), {pivot, pincers[i], pincers[j]},
+                                                           digitsOf(pivotMask), removed, evidence,
+                                                           "cells that see the pivot and both wings lose " + std::to_string(z)));
+                        return true;
+                    }
                 }
             }
         }
@@ -169,9 +241,7 @@ bool XYZWing::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
 // ---------------- Skyscraper ----------------
 
-bool Skyscraper::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool Skyscraper::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int orient = 0; orient < 2; ++orient) {
             std::vector<std::pair<int, uint16_t>> strongLines; // lines with exactly 2 candidate cells
@@ -190,7 +260,22 @@ bool Skyscraper::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     Cell endA = lineCell(orient, strongLines[a].first, Grid::lowestSetDigit(topA) - 1);
                     Cell endB = lineCell(orient, strongLines[b].first, Grid::lowestSetDigit(topB) - 1);
 
-                    if (eliminateSeenByAll(grid, {endA, endB}, digit)) return true;
+                    // Evidence: in each of the two lines the digit is missing everywhere but those two cells.
+                    std::vector<Removal> evidence;
+                    absentOnLine(grid, evidence, orient, strongLines[a].first, strongLines[a].second, digit);
+                    absentOnLine(grid, evidence, orient, strongLines[b].first, strongLines[b].second, digit);
+
+                    std::vector<Removal> removed;
+                    if (eliminateSeenByAll(grid, {endA, endB}, digit, removed)) {
+                        std::vector<Cell> pattern;
+                        for (auto& sl : {strongLines[a], strongLines[b]})
+                            for (int pos = 0; pos < SIZE; ++pos)
+                                if (sl.second & (1u << pos)) pattern.push_back(lineCell(orient, sl.first, pos));
+                        log.push_back(StepLog::elimination(name(), pattern, {digit}, removed, evidence,
+                                                           std::string(orient == 0 ? "rows " : "columns ") +
+                                                               listOneBased({strongLines[a].first, strongLines[b].first})));
+                        return true;
+                    }
                 }
             }
         }
@@ -200,9 +285,7 @@ bool Skyscraper::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
 // ---------------- 2-String Kite ----------------
 
-bool TwoStringKite::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
-
+bool TwoStringKite::apply(Grid& grid, std::vector<StepLog>& log) {
     for (int digit = 1; digit <= SIZE; ++digit) {
         for (int row = 0; row < SIZE; ++row) {
             uint16_t rowMask = linePositions(grid, 0, row, digit);
@@ -227,8 +310,22 @@ bool TwoStringKite::apply(Grid& grid, std::vector<PlacementLog>& log) {
                         if (r1 == k1 || r2 == k2) continue;
                         if (Grid::boxOf(r1.first, r1.second) != Grid::boxOf(k1.first, k1.second)) continue;
 
+                        // Evidence: the digit is missing from the rest of the row and the rest of the column.
+                        std::vector<Removal> evidence;
+                        absentOnLine(grid, evidence, 0, row, rowMask, digit);
+                        absentOnLine(grid, evidence, 1, col, colMask, digit);
+
                         // r1 and k1 can't both be true (same box), so r2 or k2 must be.
-                        if (eliminateSeenByAll(grid, {r2, k2}, digit)) return true;
+                        std::vector<Removal> removed;
+                        if (eliminateSeenByAll(grid, {r2, k2}, digit, removed)) {
+                            std::vector<Cell> pattern;
+                            for (auto& cell : rowCells) addUnique(pattern, cell);
+                            for (auto& cell : colCells) addUnique(pattern, cell);
+                            log.push_back(StepLog::elimination(name(), pattern, {digit}, removed, evidence,
+                                                               "row " + std::to_string(row + 1) + " and column " + std::to_string(col + 1) +
+                                                                   " linked through box " + std::to_string(Grid::boxOf(r1.first, r1.second) + 1)));
+                            return true;
+                        }
                     }
                 }
             }
@@ -239,8 +336,7 @@ bool TwoStringKite::apply(Grid& grid, std::vector<PlacementLog>& log) {
 
 // ---------------- Simple Coloring ----------------
 
-bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
-    (void)log;
+bool SimpleColoring::apply(Grid& grid, std::vector<StepLog>& log) {
     auto idx = [](Cell c) { return c.first * SIZE + c.second; };
 
     for (int digit = 1; digit <= SIZE; ++digit) {
@@ -281,6 +377,22 @@ bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
             std::array<std::vector<Cell>, 2> byColor;
             for (int m : members) byColor[color[m]].push_back({m / SIZE, m % SIZE});
 
+            std::vector<Cell> chain = byColor[0];
+            chain.insert(chain.end(), byColor[1].begin(), byColor[1].end());
+
+            // Evidence: every conjugate link of this chain relies on the digit missing from the rest of its unit.
+            std::array<bool, SIZE * SIZE> inChain{};
+            for (int m : members) inChain[m] = true;
+            std::vector<Removal> evidence;
+            for (auto& unit : allUnits()) {
+                std::vector<Cell> hosts;
+                for (auto& cell : unit)
+                    if (hasCandidate(grid, cell, digit)) hosts.push_back(cell);
+                if (hosts.size() != 2 || !inChain[idx(hosts[0])]) continue;
+                for (auto& cell : unit)
+                    if (std::find(hosts.begin(), hosts.end(), cell) == hosts.end()) addAbsence(grid, evidence, cell.first, cell.second, digit);
+            }
+
             // Rule "wrap": two same-colored cells that see each other => that color is false.
             for (int k = 0; k < 2; ++k) {
                 auto& cells = byColor[k];
@@ -289,15 +401,18 @@ bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     for (size_t b = a + 1; b < cells.size() && !wrapped; ++b)
                         if (Grid::sees(cells[a], cells[b])) wrapped = true;
                 if (wrapped) {
-                    bool changed = false;
-                    for (auto& cell : cells)
-                        if (grid.eliminateCandidate(cell.first, cell.second, digit)) changed = true;
-                    if (changed) return true;
+                    std::vector<Removal> removed;
+                    for (auto& cell : cells) removeCandidate(grid, removed, cell.first, cell.second, digit);
+                    if (!removed.empty()) {
+                        log.push_back(StepLog::elimination(name(), chain, {digit}, removed, evidence,
+                                                           "color wrap: two cells of one color see each other, so that color is false"));
+                        return true;
+                    }
                 }
             }
 
             // Rule "trap": a cell outside the chain that sees both colors can't hold the digit.
-            bool changed = false;
+            std::vector<Removal> removed;
             for (int r = 0; r < SIZE; ++r) {
                 for (int c = 0; c < SIZE; ++c) {
                     Cell x{r, c};
@@ -306,10 +421,14 @@ bool SimpleColoring::apply(Grid& grid, std::vector<PlacementLog>& log) {
                     for (int k = 0; k < 2; ++k)
                         for (auto& cell : byColor[k])
                             if (Grid::sees(x, cell)) { seesColor[k] = true; break; }
-                    if (seesColor[0] && seesColor[1] && grid.eliminateCandidate(r, c, digit)) changed = true;
+                    if (seesColor[0] && seesColor[1]) removeCandidate(grid, removed, r, c, digit);
                 }
             }
-            if (changed) return true;
+            if (!removed.empty()) {
+                log.push_back(StepLog::elimination(name(), chain, {digit}, removed, evidence,
+                                                   "color trap: a cell that sees both colors can't be " + std::to_string(digit)));
+                return true;
+            }
         }
     }
     return false;

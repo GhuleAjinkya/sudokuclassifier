@@ -1,15 +1,28 @@
 import React, { useRef } from 'react';
 import { boxOf, colOf, rowOf } from './sudokuUtils.js';
-import { TIER_STYLE } from './techniqueInfo.js';
+import { SEARCH_STYLE, TIER_STYLE } from './techniqueInfo.js';
 
-// Pure display component. The parent decides what each cell shows and what keys do.
-//   values      81-char string ('.' = empty)
-//   givens      boolean[81]  - original clues (drawn bold)
-//   tiers       (number|null)[81] - cells filled by the visualizer, tinted by technique tier
-//   conflicts   Set of cell indices that clash with a peer
-//   currentCell index of the cell placed at the current visualizer step
-export default function Board({ values, givens, tiers, selected, conflicts, currentCell, onSelect, onKeyDown }) {
+const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const NO_FOCUS = { cells: new Set(), pattern: new Set(), strike: new Map(), ghosts: new Map(), dead: new Set(), keyDigits: new Set(), color: null };
+
+// How a cell filled during the replay is coloured: by tier of its real reason for logic steps, red tones for the search.
+function fillStyle(how) {
+  if (!how) return undefined;
+  if (how.source === 'guess') return { color: SEARCH_STYLE.guess.color, backgroundColor: SEARCH_STYLE.guess.bg };
+  if (how.source === 'forced') return { color: SEARCH_STYLE.forced.color, backgroundColor: SEARCH_STYLE.forced.bg };
+  const t = TIER_STYLE[how.tier];
+  return { color: t.color, backgroundColor: t.bg };
+}
+
+// Draws the grid and nothing else. The parent decides what each cell shows and what the keys do.
+//   values       81-char string ('.' = empty)
+//   givens       boolean[81]: original clues (drawn bold)
+//   conflicts    Set of cell indices that clash with a peer
+//   view         optional replay state: { masks, how, focus, showCandidates }
+export default function Board({ values, givens, selected, conflicts, view, onSelect, onKeyDown }) {
   const ref = useRef(null);
+  const focus = view ? view.focus : NO_FOCUS;
+  const showCands = Boolean(view && view.showCandidates);
   const selectedDigit = selected != null && values[selected] !== '.' ? values[selected] : null;
 
   const cells = [];
@@ -28,11 +41,16 @@ export default function Board({ values, givens, tiers, selected, conflicts, curr
     }
     if (selectedDigit && values[i] === selectedDigit && i !== selected) cls.push('same-digit');
     if (conflicts.has(i)) cls.push('conflict');
-    if (i === currentCell) cls.push('current');
+    if (focus.cells.has(i)) cls.push('current');
+    if (focus.pattern.has(i)) cls.push('pattern');
+    if (focus.dead.has(i)) cls.push('dead');
 
-    const tier = tiers[i];
-    const style = tier != null ? { color: TIER_STYLE[tier].color, backgroundColor: TIER_STYLE[tier].bg } : undefined;
+    const how = view ? view.how[i] : null;
+    const style = { ...fillStyle(how), '--focus': focus.color || '#111827' };
     const digit = values[i] === '.' ? '' : values[i];
+    const strikes = focus.strike.get(i);
+    const ghost = focus.ghosts.get(i);
+    const inPattern = focus.pattern.has(i);
 
     cells.push(
       <div
@@ -48,23 +66,31 @@ export default function Board({ values, givens, tiers, selected, conflicts, curr
         }}
       >
         {digit && (
-          <span key={i === currentCell ? `now-${values[i]}` : 'static'} className="digit">
+          <span key={focus.cells.has(i) ? `now-${digit}` : 'static'} className="digit">
             {digit}
           </span>
         )}
+        {!digit && showCands && (
+          <div className="cands" aria-hidden="true">
+            {DIGITS.map((d) => {
+              const present = (view.masks[i] >> (d - 1)) & 1;
+              const struck = strikes && strikes.has(d);
+              const key = inPattern && focus.keyDigits.has(d);
+              return (
+                <span key={d} className={`cand${struck ? ' struck' : ''}${key ? ' key' : ''}`}>
+                  {present || struck ? d : ''}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {!digit && ghost && <span className="ghost" title="This guess was undone">{ghost}</span>}
       </div>
     );
   }
 
   return (
-    <div
-      ref={ref}
-      className="board"
-      role="grid"
-      aria-label="Sudoku board"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-    >
+    <div ref={ref} className="board" role="grid" aria-label="Sudoku board" tabIndex={0} onKeyDown={onKeyDown}>
       {cells}
     </div>
   );

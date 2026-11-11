@@ -1,5 +1,6 @@
 #include "Solver.h"
 #include "Tier3.h"
+#include "Reasons.h"
 #include "Tier4.h"
 
 Solver::Solver() {
@@ -32,8 +33,12 @@ Solver::Solver() {
     add(std::make_unique<Fish>(4), 3);          // Jellyfish
 }
 
-bool Solver::solve(Grid& grid, std::vector<PlacementLog>& log) {
+bool Solver::solve(Grid& grid, std::vector<StepLog>& log) {
     stats_ = SolveStats{};
+    searchTrace_.clear();
+    searchTraceTruncated_ = false;
+    const Grid start = grid;
+    const size_t logStart = log.size();
 
     while (!grid.isSolved()) {
         bool progressed = false;
@@ -53,25 +58,34 @@ bool Solver::solve(Grid& grid, std::vector<PlacementLog>& log) {
         if (!progressed) break; // logic is stuck
     }
 
+    // Work out why each logic step was possible (e.g. a Naked Single that an XY-Wing unlocked).
+    reasons::attribute(start, log, logStart, [this](const std::string& name) {
+        for (const auto& entry : techniques_)
+            if (entry.technique->name() == name) return entry.tier;
+        return 0;
+    });
+
     if (!grid.isSolved() && searchEnabled_) {
         // Tier 4: hand the stuck grid (with all logical eliminations) to the search.
         Backtracker bt;
-        SearchResult res = bt.search(grid, 1);
+        SearchResult res = bt.search(grid, 1, recordSearchTrace_);
         stats_.usedSearch = true;
         stats_.guesses = res.guesses;
         stats_.searchAssignments = res.assignments;
+        stats_.searchDeadEnds = res.deadEnds;
         stats_.searchDepth = res.maxDepth;
         stats_.firstBranching = res.firstBranching;
         stats_.highestTier = 4;
+        searchTrace_ = std::move(res.trace);
+        searchTraceTruncated_ = res.traceTruncated;
 
         if (res.solutionCount > 0) {
-            for (int r = 0; r < SIZE; ++r) {
-                for (int c = 0; c < SIZE; ++c) {
-                    if (grid.values[r][c] == 0) {
-                        log.push_back({r, c, res.solution.values[r][c], "Backtracking Search"});
-                        ++stats_.searchCells;
-                    }
-                }
+            // Log the placements of the successful path in the order they were really made
+            // (guesses and forced placements), not in reading order.
+            for (auto& step : res.path) {
+                std::string detail = step.guess ? "guess (depth " + std::to_string(step.depth) + ")" : "forced: " + step.reason;
+                log.push_back(StepLog::placement("Backtracking Search", step.row, step.col, step.digit, detail));
+                ++stats_.searchCells;
             }
             grid = res.solution;
         }

@@ -1,11 +1,23 @@
 // Names here must match the strings printed by the C++ solver exactly.
 
+// One colour family per tier, used everywhere: board cells, outlines, timeline, legend, report.
+//   color = text / strong colour, bg = cell tint, solid = outlines, timeline ticks and dots
 export const TIER_STYLE = {
-  0: { label: 'Other', short: 'Other', color: '#374151', bg: '#e5e7eb' },
-  1: { label: 'Tier 1 · Basic', short: 'Basic', color: '#1d4ed8', bg: '#dbeafe' },
-  2: { label: 'Tier 2 · Intermediate', short: 'Intermediate', color: '#b45309', bg: '#fef3c7' },
-  3: { label: 'Tier 3 · Advanced', short: 'Advanced', color: '#6d28d9', bg: '#ede9fe' },
-  4: { label: 'Tier 4 · Search', short: 'Guessing', color: '#b91c1c', bg: '#fee2e2' },
+  0: { label: 'Other', short: 'Other', color: '#374151', bg: '#e5e7eb', solid: '#6b7280' },
+  1: { label: 'Tier 1 · Basic', short: 'Basic', color: '#1e3a8a', bg: '#bfdbfe', solid: '#2563eb' },
+  2: { label: 'Tier 2 · Intermediate', short: 'Intermediate', color: '#92400e', bg: '#fde68a', solid: '#d97706' },
+  3: { label: 'Tier 3 · Advanced', short: 'Advanced', color: '#5b21b6', bg: '#ddd6fe', solid: '#7c3aed' },
+  4: { label: 'Tier 4 · Search', short: 'Guessing', color: '#991b1b', bg: '#fecaca', solid: '#dc2626' },
+};
+
+// The parts of Tier 4 (backtracking) get their own looks so wrong turns stand out.
+export const SEARCH_STYLE = {
+  guess: { label: 'Guess', color: '#ffffff', bg: '#dc2626', solid: '#dc2626' },
+  forced: { label: 'Forced by propagation', color: '#991b1b', bg: '#fecaca', solid: '#f87171' },
+  dead: { label: 'Dead end', color: '#ffffff', bg: '#111827', solid: '#111827' },
+  undo: { label: 'Undone (wrong turn)', color: '#374151', bg: '#e5e7eb', solid: '#9ca3af' },
+  solved: { label: 'Solved', color: '#14532d', bg: '#bbf7d0', solid: '#16a34a' },
+  cut: { label: 'Trace cut off', color: '#9a3412', bg: '#fed7aa', solid: '#ea580c' },
 };
 
 export const SEARCH_NAME = 'Backtracking Search';
@@ -34,3 +46,7 @@ export const TECHNIQUES = {
 
 export const tierOf = (name) => (TECHNIQUES[name] ? TECHNIQUES[name].tier : 0);
 export const blurbOf = (name) => (TECHNIQUES[name] ? TECHNIQUES[name].blurb : '');
+
+// The technique that REALLY made a logic step possible: for a placement that an elimination unlocked
+// (e.g. an XY-Wing that turned a cell into a naked single) this is the XY-Wing, not the single.
+export const reasonOf = (step) => step.root || step.method;

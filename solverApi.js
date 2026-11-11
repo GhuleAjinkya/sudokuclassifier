@@ -1,12 +1,11 @@
 // Bridge between the browser UI and the C++ programs in this folder.
 //
-//   GET  /api/health    -> can we start sudoku_solver and qqwing?
+//   GET  /api/health    -> can we start sudoku_solver (new enough to speak --json) and qqwing?
 //   GET  /api/config    -> rating weights + thresholds (from `sudoku_solver --dump-config`)
 //   POST /api/generate  -> { difficulty }  runs `qqwing --generate 1 --difficulty <d> --one-line`
-//   POST /api/analyze   -> { puzzle }      runs `sudoku_solver --puzzle <81 chars>` and parses the report
+//   POST /api/analyze   -> { puzzle }      runs `sudoku_solver --json --puzzle <81 chars>`
 //
-// The C++ code is not modified: its text output is parsed here. Programs are started with
-// execFile and an argument array (no shell), and every input is validated first.
+// Programs are started with execFile and an argument array (no shell), and every input is validated first.
 //
 // Optional environment variables: SOLVER_PATH, QQWING_PATH (full paths to the executables).
 
@@ -74,67 +73,22 @@ function run(bin, args, { timeoutMs = 30000, signal } = {}) {
 
 // ---------------------------------------------------------------- parsing
 
-// Parses the output of `sudoku_solver --puzzle <81 chars>` (single-puzzle "detailed" mode).
-export function parseAnalysis(stdout, puzzle) {
-  const lines = stdout.split(/\r?\n/);
-
-  if (lines.some((l) => /^#1\s+NO SOLUTION/.test(l))) {
-    return { puzzle, outcome: 'invalid', uniqueness: 'none', rating: null, techniques: [], search: null, placements: [], solution: null };
-  }
-
-  const placements = [];
-  for (const line of lines) {
-    const m = line.match(/^Placed (\d) at \(row (\d), col (\d)\) via (.+?)\s*$/);
-    if (m) placements.push({ digit: Number(m[1]), row: Number(m[2]) - 1, col: Number(m[3]) - 1, method: m[4] });
-  }
-
-  const head = lines.find((l) => /^#1\s/.test(l));
-  const m =
-    head &&
-    head.match(
-      /^#1\s+(solved WITH SEARCH|solved by logic|UNSOLVED)\s*\|\s*(unique|MULTIPLE SOLUTIONS)\s*\|\s*Difficulty:\s*(\w+)\s*\(score\s*([\d.]+)\)\s*\|\s*Length:\s*(\w+)\s*\((\d+) steps\)\s*\|\s*Complexity:\s*(\w+)\s*\((\d+) iterations\)/
+// Parses `sudoku_solver --json` output: a JSON array with one result per puzzle.
+export function parseAnalysis(stdout) {
+  let data;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    throw new HttpError(
+      500,
+      'sudoku_solver did not return JSON, so it is probably an old build. Rebuild it from the current source (run.bat does this).'
     );
-  if (!m) {
-    throw new HttpError(500, 'Could not understand the solver output. Is sudoku_solver up to date with the source code?');
   }
-
-  // "techniques: Hidden Pair x2, Naked Single x44, Backtracking Search (38 cells, 3 guesses, depth 3)"
-  let techniqueText = '';
-  const techLine = lines.find((l) => /^\s+techniques:/.test(l));
-  if (techLine) techniqueText = techLine.replace(/^\s+techniques:\s*/, '');
-
-  let search = null;
-  const sm = techniqueText.match(/Backtracking Search \((\d+) cells, (\d+) guesses, depth (\d+)\)/);
-  if (sm) {
-    search = { cells: Number(sm[1]), guesses: Number(sm[2]), depth: Number(sm[3]) };
-    techniqueText = techniqueText.replace(sm[0], '');
+  const r = Array.isArray(data) ? data[0] : null;
+  if (!r || typeof r.puzzle !== 'string' || !Array.isArray(r.steps) || typeof r.outcome !== 'string') {
+    throw new HttpError(500, 'Unexpected output from sudoku_solver. Rebuild it from the current source (run.bat does this).');
   }
-  const techniques = [];
-  for (const part of techniqueText.split(',')) {
-    const t = part.trim().match(/^(.*) x(\d+)$/);
-    if (t) techniques.push({ name: t[1].trim(), count: Number(t[2]) });
-  }
-
-  const cells = puzzle.replace(/0/g, '.').split('');
-  for (const p of placements) cells[p.row * 9 + p.col] = String(p.digit);
-
-  return {
-    puzzle,
-    outcome: m[1] === 'solved WITH SEARCH' ? 'search' : m[1] === 'solved by logic' ? 'logic' : 'unsolved',
-    uniqueness: m[2] === 'unique' ? 'unique' : 'multiple',
-    rating: {
-      difficulty: m[3],
-      score: Number(m[4]),
-      length: m[5],
-      steps: Number(m[6]),
-      complexity: m[7],
-      iterations: Number(m[8]),
-    },
-    techniques,
-    search,
-    placements,
-    solution: cells.includes('.') ? null : cells.join(''),
-  };
+  return r;
 }
 
 // Parses the `key = value` text printed by `sudoku_solver --dump-config`.
@@ -178,17 +132,21 @@ async function health() {
       await fn();
       return { ok: true };
     } catch (e) {
-      // The program started but exited with an error.
+      // The program started but failed.
       if (!e.notFound && e.status === 500 && onBadExit) return onBadExit(e);
       return { ok: false, error: e.message };
     }
   };
   return {
-    // An old sudoku_solver build does not know --dump-config, prints its usage text and exits with an error.
-    solver: await check(() => run(solverPath(), ['--dump-config'], { timeoutMs: 10000 }), () => ({
-      ok: false,
-      error: 'sudoku_solver started but does not support --dump-config, so it is probably an old build. Rebuild it from the current source (run.bat does this).',
-    })),
+    // With no puzzle, the solver uses its built-in sample, so this proves it can start AND speaks --json.
+    // (An old build prints its usage text and exits with an error, or prints non-JSON text.)
+    solver: await check(
+      async () => parseAnalysis(await run(solverPath(), ['--json'], { timeoutMs: 15000 })),
+      () => ({
+        ok: false,
+        error: 'sudoku_solver started but does not support --json, so it is probably an old build. Rebuild it from the current source (run.bat does this).',
+      })
+    ),
     // qqwing may not have a --version flag; being able to start it is enough.
     qqwing: await check(() => run(qqwingPath(), ['--version'], { timeoutMs: 10000 }), () => ({ ok: true })),
   };
@@ -215,8 +173,8 @@ async function generate(body, signal) {
 async function analyze(body, signal) {
   const puzzle = String(body && body.puzzle ? body.puzzle : '').replace(/\s+/g, '').replace(/0/g, '.');
   if (!PUZZLE_RE.test(puzzle)) throw new HttpError(400, 'puzzle must be 81 characters: digits 1-9, with . for blanks.');
-  const out = await run(solverPath(), [...configArgs(), '--puzzle', puzzle], { timeoutMs: 30000, signal });
-  return parseAnalysis(out, puzzle);
+  const out = await run(solverPath(), ['--json', ...configArgs(), '--puzzle', puzzle], { timeoutMs: 30000, signal });
+  return parseAnalysis(out);
 }
 
 // ---------------------------------------------------------------- http plumbing

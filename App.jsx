@@ -3,12 +3,15 @@ import Board from './Board.jsx';
 import Generator from './Generator.jsx';
 import Editor from './Editor.jsx';
 import Visualizer from './Visualizer.jsx';
+import StepCaption from './StepCaption.jsx';
 import Report from './Report.jsx';
+import Took from './Took.jsx';
 import { api } from './api.js';
-import { EMPTY, auditPlacements, colOf, countGivens, findConflicts, normalize, rowOf } from './sudokuUtils.js';
-import { tierOf } from './techniqueInfo.js';
+import { buildFrames, frameView } from './replay.js';
+import { EMPTY, colOf, countGivens, findConflicts, normalize, rowOf } from './sudokuUtils.js';
 
-const NO_PLACEMENTS = [];
+const NO_FRAMES = [];
+const NO_CONFLICTS = new Set();
 const LEVEL_NAMES = { simple: 'Simple', easy: 'Easy', intermediate: 'Intermediate', expert: 'Expert' };
 
 export default function App() {
@@ -22,6 +25,7 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState(0);
+  const [showCandidates, setShowCandidates] = useState(true);
   const [config, setConfig] = useState(null);
   const [health, setHealth] = useState(null);
   const analyzeAbort = useRef(null);
@@ -108,22 +112,11 @@ export default function App() {
 
   // ------------------------------------------------------------ what the board shows
 
-  const placements = analysis ? analysis.placements : NO_PLACEMENTS;
-  const { values, tiers, currentCell } = useMemo(() => {
-    const vals = puzzle.split('');
-    const tr = new Array(81).fill(null);
-    let cur = null;
-    for (let s = 0; s < step && s < placements.length; s++) {
-      const p = placements[s];
-      const i = p.row * 9 + p.col;
-      vals[i] = String(p.digit);
-      tr[i] = tierOf(p.method);
-      cur = i;
-    }
-    return { values: vals.join(''), tiers: tr, currentCell: step > 0 ? cur : null };
-  }, [puzzle, placements, step]);
+  const frames = useMemo(() => (analysis ? buildFrames(analysis) : NO_FRAMES), [analysis]);
+  const solution = analysis ? analysis.solution : null;
+  const view = useMemo(() => frameView(puzzle, frames, step, solution), [puzzle, frames, step, solution]);
+  const boardView = useMemo(() => ({ ...view, showCandidates: showCandidates && step > 0 }), [view, showCandidates, step]);
 
-  const audit = useMemo(() => auditPlacements(puzzle, placements), [puzzle, placements]);
   const givens = useMemo(() => puzzle.split('').map((ch) => ch !== '.'), [puzzle]);
   const conflicts = useMemo(() => findConflicts(puzzle), [puzzle]);
   const givenCount = countGivens(puzzle);
@@ -175,8 +168,9 @@ export default function App() {
         </div>
       )}
 
-      <main className="layout">
-        <section className="card board-card" aria-label="Puzzle">
+      <main className="dashboard">
+        {/* Left: everything you click */}
+        <section className="card controls-card area-controls" aria-label="Controls">
           <div className="tabs" role="tablist">
             <button type="button" role="tab" aria-selected={tab === 'generate'} className={tab === 'generate' ? 'tab active' : 'tab'} onClick={() => setTab('generate')}>
               Generate
@@ -209,21 +203,7 @@ export default function App() {
             />
           )}
 
-          <div className="board-wrap">
-            <Board
-              values={values}
-              givens={givens}
-              tiers={tiers}
-              selected={selected}
-              conflicts={conflicts}
-              currentCell={currentCell}
-              onSelect={setSelected}
-              onKeyDown={onBoardKeyDown}
-            />
-          </div>
-
-          <div className="row between board-actions">
-            <span className="muted small">{label}</span>
+          <div className="row analyze-row">
             <button type="button" className="primary" onClick={() => analyze(puzzle)} disabled={analyzeDisabled}>
               {analyzing ? 'Analyzing…' : analysis ? 'Re-analyze' : 'Analyze puzzle'}
             </button>
@@ -231,18 +211,41 @@ export default function App() {
 
           {error && <div className="notice error">{error}</div>}
 
-          {analysis && analysis.placements.length > 0 && <Visualizer analysis={analysis} audit={audit} step={step} setStep={setStep} />}
-          {analysis && analysis.placements.length === 0 && analysis.outcome !== 'invalid' && (
+          {frames.length > 0 && (
+            <Visualizer frames={frames} step={step} setStep={setStep} showCandidates={showCandidates} setShowCandidates={setShowCandidates} />
+          )}
+          {analysis && frames.length === 0 && analysis.outcome !== 'invalid' && (
             <p className="muted small">Nothing to replay: the puzzle was already complete.</p>
           )}
         </section>
 
-        <section className="card report-card" aria-label="Difficulty report">
-          {config ? (
-            <Report analysis={analysis} config={config} analyzing={analyzing} />
-          ) : (
-            <p className="muted">Loading rating settings…</p>
-          )}
+        {/* Right: the grid, on its own */}
+        <section className="card board-card area-board" aria-label="Puzzle grid">
+          <div className="board-head">
+            <h2>Grid</h2>
+            <span className="muted small">{label}</span>
+          </div>
+          <div className="board-wrap">
+            <Board
+              values={view.values}
+              givens={givens}
+              selected={selected}
+              conflicts={step === 0 ? conflicts : NO_CONFLICTS}
+              view={boardView}
+              onSelect={setSelected}
+              onKeyDown={onBoardKeyDown}
+            />
+          </div>
+          <StepCaption frames={frames} step={step} view={view} hasSearch={Boolean(analysis && analysis.search)} />
+        </section>
+
+        {/* Below: the squished report, and what it took to solve in its own column */}
+        <section className="card report-card area-report" aria-label="Difficulty report">
+          {config ? <Report analysis={analysis} config={config} analyzing={analyzing} /> : <p className="muted">Loading rating settings…</p>}
+        </section>
+
+        <section className="card took-card area-took" aria-label="What it took to solve">
+          {config ? <Took analysis={analysis} config={config} /> : <p className="muted">Loading rating settings…</p>}
         </section>
       </main>
     </div>

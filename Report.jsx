@@ -11,7 +11,17 @@ const BAND = {
 };
 const ZONE_COLORS = ['#bbf7d0', '#fde68a', '#fecaca'];
 
-const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+export const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+export function hardestTechnique(analysis) {
+  if (analysis.search) return { name: SEARCH_NAME, tier: 4 };
+  let best = null;
+  for (const t of analysis.techniques) {
+    const tier = tierOf(t.name);
+    if (!best || tier > best.tier) best = { name: t.name, tier };
+  }
+  return best;
+}
 
 // Where to draw the marker. The three zones get equal width so that every band is readable
 // no matter how narrow it is numerically.
@@ -49,39 +59,7 @@ function Meter({ title, value, valueText, band, mid, high, labels, integer }) {
   );
 }
 
-function hardestTechnique(analysis) {
-  if (analysis.search) return { name: SEARCH_NAME, tier: 4 };
-  let best = null;
-  for (const t of analysis.techniques) {
-    const tier = tierOf(t.name);
-    if (!best || tier > best.tier) best = { name: t.name, tier };
-  }
-  return best;
-}
-
-function explain(analysis, config) {
-  const r = analysis.rating;
-  const hardest = hardestTechnique(analysis);
-  const parts = [];
-  if (!hardest) {
-    parts.push('The puzzle was already complete, so no solving techniques were needed.');
-  } else if (hardest.tier === 4) {
-    parts.push(
-      `Logic alone got stuck, so the solver had to guess. It filled ${analysis.search.cells} cells by search ` +
-        `(${analysis.search.guesses} guesses, nesting depth ${analysis.search.depth}). Needing to guess adds a flat ` +
-        `${fmt(config.searchBase)}-point penalty plus ${fmt(config.searchPerDepth)} points per level of nesting.`
-    );
-  } else if (hardest.tier === 3) {
-    parts.push(`The hardest technique required was ${hardest.name}, an advanced (Tier 3) pattern. Every Tier 3 step is weighted heavily.`);
-  } else if (hardest.tier === 2) {
-    parts.push(`The hardest technique required was ${hardest.name}, an intermediate (Tier 2) technique. No advanced patterns or guessing were needed.`);
-  } else {
-    parts.push('Only single-candidate moves (naked and hidden singles) were needed, with no pairs, patterns or guessing.');
-  }
-  parts.push(`Overall the puzzle rates ${r.difficulty} difficulty, ${r.length} length and ${r.complexity} complexity.`);
-  return parts.join(' ');
-}
-
+// The compact difficulty report: three ratings, a few facts, and where each sits against its thresholds.
 export default function Report({ analysis, config, analyzing }) {
   if (!analysis) {
     return (
@@ -90,7 +68,7 @@ export default function Report({ analysis, config, analyzing }) {
         <p className="muted">
           {analyzing
             ? 'Analyzing the puzzle…'
-            : 'Generate a puzzle or build your own, then press Analyze to see how hard it is and which techniques solve it.'}
+            : 'Generate a puzzle or build your own, then press Analyze to see how hard it is.'}
         </p>
         {analyzing && <span className="spinner big" aria-hidden="true" />}
       </div>
@@ -112,22 +90,6 @@ export default function Report({ analysis, config, analyzing }) {
   const t = config.thresholds;
   const hardest = hardestTechnique(analysis);
 
-  const rows = analysis.techniques.map((x) => {
-    const weight = config.weights[x.name] != null ? config.weights[x.name] : 1;
-    return { name: x.name, tier: tierOf(x.name), steps: `${x.count}`, weightText: fmt(weight), points: weight * x.count };
-  });
-  if (analysis.search) {
-    rows.push({
-      name: SEARCH_NAME,
-      tier: 4,
-      steps: `${analysis.search.cells} cells`,
-      weightText: `${fmt(config.searchBase)} + ${fmt(config.searchPerDepth)}/level`,
-      points: config.searchBase + config.searchPerDepth * analysis.search.depth,
-    });
-  }
-  rows.sort((a, b) => b.tier - a.tier || b.points - a.points);
-  const maxPoints = Math.max(...rows.map((x) => x.points), 1);
-
   return (
     <div>
       <h2>Difficulty report</h2>
@@ -146,16 +108,16 @@ export default function Report({ analysis, config, analyzing }) {
         <div className="tile" style={{ backgroundColor: BAND[r.complexity].bg, color: BAND[r.complexity].color }}>
           <div className="tile-label">Complexity</div>
           <div className="tile-value">{r.complexity}</div>
-          <div className="tile-sub">{r.iterations} iterations</div>
+          <div className="tile-sub">{r.iterations} iter.</div>
         </div>
       </div>
 
       <div className="facts">
         <span className={`fact ${analysis.outcome === 'search' ? 'warn' : 'ok'}`}>
-          {analysis.outcome === 'search' ? 'Needed guessing (Tier 4)' : analysis.outcome === 'logic' ? 'Solved by logic alone' : 'Not fully solved'}
+          {analysis.outcome === 'search' ? 'Needed guessing' : analysis.outcome === 'logic' ? 'Solved by logic' : 'Not fully solved'}
         </span>
         <span className={`fact ${analysis.uniqueness === 'unique' ? 'ok' : 'warn'}`}>
-          {analysis.uniqueness === 'unique' ? 'Exactly one solution' : 'Multiple solutions'}
+          {analysis.uniqueness === 'unique' ? 'One solution' : 'Multiple solutions'}
         </span>
         {hardest && (
           <span className="fact" style={{ color: TIER_STYLE[hardest.tier].color, backgroundColor: TIER_STYLE[hardest.tier].bg }}>
@@ -166,11 +128,9 @@ export default function Report({ analysis, config, analyzing }) {
 
       {analysis.uniqueness !== 'unique' && (
         <div className="notice warn">
-          This puzzle has more than one solution. The rating describes one route to a solution; a well-formed puzzle has exactly one.
+          More than one solution exists. The rating describes one route to a solution; a well-formed puzzle has exactly one.
         </div>
       )}
-
-      <p className="explain">{explain(analysis, config)}</p>
 
       <Meter
         title="Difficulty score"
@@ -182,9 +142,9 @@ export default function Report({ analysis, config, analyzing }) {
         labels={['Low', 'Medium', 'High']}
       />
       <Meter
-        title="Length (steps to finish)"
+        title="Length (steps)"
         value={r.steps}
-        valueText={`${r.steps} steps`}
+        valueText={`${r.steps}`}
         band={r.length}
         mid={t.length.medium}
         high={t.length.high}
@@ -192,7 +152,7 @@ export default function Report({ analysis, config, analyzing }) {
         integer
       />
       <Meter
-        title="Complexity (solver iterations)"
+        title="Complexity (iterations)"
         value={r.iterations}
         valueText={`${r.iterations}`}
         band={r.complexity}
@@ -201,50 +161,6 @@ export default function Report({ analysis, config, analyzing }) {
         labels={['Low', 'Medium', 'High']}
         integer
       />
-
-      <h3>What it took to solve</h3>
-      {rows.length === 0 ? (
-        <p className="muted">No techniques were needed.</p>
-      ) : (
-        <div className="table-wrap">
-          <table className="techniques">
-            <thead>
-              <tr>
-                <th>Technique</th>
-                <th className="num">Steps</th>
-                <th className="num">Weight</th>
-                <th>Points</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.name}>
-                  <td>
-                    <span className="dot" style={{ backgroundColor: TIER_STYLE[row.tier].color }} aria-hidden="true" />
-                    {row.name}
-                    <div className="muted small">{TIER_STYLE[row.tier].label}</div>
-                  </td>
-                  <td className="num">{row.steps}</td>
-                  <td className="num">{row.weightText}</td>
-                  <td>
-                    <div className="points">
-                      <div className="bar" style={{ width: `${(row.points / maxPoints) * 100}%`, backgroundColor: TIER_STYLE[row.tier].color }} />
-                      <span>{row.points.toFixed(2)}</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={3}>Difficulty score</td>
-                <td><strong>{fmt(r.score)}</strong></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-      <p className="muted small">Weights and thresholds come from ratings.cfg. Edit that file to re-tune the ratings.</p>
     </div>
   );
 }

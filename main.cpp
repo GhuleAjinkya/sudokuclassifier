@@ -1,4 +1,5 @@
 #include "Grid.h"
+#include "Output.h"
 #include "QQWingBridge.h"
 #include "Rater.h"
 #include "Solver.h"
@@ -22,7 +23,8 @@ static void usage() {
         "  --qqwing-path <exe>                           path to qqwing if it isn't on PATH\n"
         "  --config <file>                               load rating weights/thresholds (see ratings.cfg)\n"
         "  --dump-config                                 print the current rating settings and exit\n"
-        "  -v                                            also print every placement (digit, coordinates, method)\n";
+        "  --json                                        print machine-readable JSON (steps, reasons, search trace, rating) instead of text\n"
+        "  -v                                            also print every step (placements and eliminations) and the search trace\n";
 }
 
 static std::string describe(const SolveStats& s) {
@@ -47,7 +49,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> puzzles;
     std::string qqwingPath = "qqwing", qqDifficulty, source = "built-in sample", configPath;
     int qqCount = 0;
-    bool verbose = false, useQQWing = false, useStdin = false, dumpConfig = false;
+    bool verbose = false, useQQWing = false, useStdin = false, dumpConfig = false, jsonMode = false;
     std::string file, single;
 
     for (int i = 1; i < argc; ++i) {
@@ -55,6 +57,7 @@ int main(int argc, char** argv) {
         if (a == "-v") verbose = true;
         else if (a == "--stdin") useStdin = true;
         else if (a == "--dump-config") dumpConfig = true;
+        else if (a == "--json") jsonMode = true;
         else if (a == "--file" && i + 1 < argc) file = argv[++i];
         else if (a == "--puzzle" && i + 1 < argc) single = argv[++i];
         else if (a == "--config" && i + 1 < argc) configPath = argv[++i];
@@ -99,6 +102,7 @@ int main(int argc, char** argv) {
     int solvedCount = 0, usedSearchCount = 0;
     int uniqueCount = 0, multipleCount = 0, noSolutionCount = 0;
     std::map<std::string, int> diffCount, lenCount, cplxCount;
+    std::vector<std::string> jsonItems;
 
     for (size_t n = 0; n < puzzles.size(); ++n) {
         Grid original = Grid::fromString(puzzles[n]);
@@ -110,6 +114,7 @@ int main(int argc, char** argv) {
         if (uniq.solutionCount == 0) {
             // Contradictory or unsolvable: there is nothing meaningful to rate.
             ++noSolutionCount;
+            if (jsonMode) { jsonItems.push_back(output::invalidJson(puzzles[n])); continue; }
             if (detailed) { std::cout << "Starting Grid\n"; original.print(); std::cout << "\n"; }
             std::cout << "#" << n + 1 << "  NO SOLUTION (contradictory or unsolvable puzzle) | not rated\n";
             continue;
@@ -119,10 +124,16 @@ int main(int argc, char** argv) {
 
         Grid grid = original;
         Solver solver;
-        std::vector<PlacementLog> log;
+        solver.setRecordSearchTrace(jsonMode || detailed || verbose);
+        std::vector<StepLog> log;
         bool solved = solver.solve(grid, log);
         const SolveStats& st = solver.stats();
         Rating rating = rater.rate(st);
+
+        if (jsonMode) {
+            jsonItems.push_back(output::resultJson(puzzles[n], solved, uniq.solutionCount, solver, rating, log, grid));
+            continue;
+        }
 
         if (detailed) {
             std::cout << "Starting Grid\n";
@@ -130,11 +141,14 @@ int main(int argc, char** argv) {
             std::cout << "\n";
         }
         if (verbose || detailed) {
-            std::cout << "Placements (" << log.size() << ")\n";
-            for (auto& e : log)
-                std::cout << "Placed " << e.digit << " at (row " << e.row + 1 << ", col " << e.col + 1
-                          << ") via " << e.method << "\n";
+            std::cout << "Steps (" << log.size() << ")\n";
+            output::printSteps(std::cout, log);
             std::cout << "\n";
+            if (!solver.searchTrace().empty()) {
+                std::cout << "Search trace (" << solver.searchTrace().size() << " events)\n";
+                output::printTrace(std::cout, solver.searchTrace(), solver.searchTraceTruncated());
+                std::cout << "\n";
+            }
         }
         if (detailed) {
             std::cout << "Final Grid\n";
@@ -156,6 +170,13 @@ int main(int argc, char** argv) {
                   << " | Length: " << rating.length << " (" << rating.steps << " steps)"
                   << " | Complexity: " << rating.complexity << " (" << rating.iterations << " iterations)\n";
         if (detailed || verbose) std::cout << "    techniques: " << describe(st) << "\n";
+    }
+
+    if (jsonMode) {
+        std::cout << "[\n";
+        for (size_t i = 0; i < jsonItems.size(); ++i) std::cout << (i ? ",\n" : "") << jsonItems[i];
+        std::cout << "\n]\n";
+        return 0;
     }
 
     auto line = [&](const char* title, std::map<std::string, int>& m, std::initializer_list<const char*> order) {
